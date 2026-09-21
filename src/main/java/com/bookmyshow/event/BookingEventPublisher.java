@@ -15,15 +15,18 @@ public class BookingEventPublisher {
         this.listeners.remove(listener);
     }
 
-    public void publishBookingConfirmed(BookingConfirmedEvent event) {
+    public void publishEvent(BookingEvent event) {
+        Objects.requireNonNull(event, "event cannot be null");
         for (BookingEventListener listener : listeners) {
-            listener.onBookingConfirmed(event);
+            listener.onEvent(event);
         }
     }
 
+    public void publishBookingConfirmed(BookingConfirmedEvent event) {
+        publishEvent(event);
+    }
+
     public void publishBookingCancelled(BookingCancelledEvent event) {
-        for (BookingEventListener listener : listeners) {
-            listener.onBookingCancelled(event);
-        }
+        publishEvent(event);
     }
 }

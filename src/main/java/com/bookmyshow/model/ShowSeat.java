@@ -60,8 +60,28 @@ public class ShowSeat {
         return lockedAt;
     }
 
+    public synchronized boolean canTransitionTo(ShowSeatStatus targetStatus, String userId) {
+        if (targetStatus == null) return false;
+        switch (this.status) {
+            case AVAILABLE:
+                return targetStatus == ShowSeatStatus.LOCKED && userId != null;
+            case LOCKED:
+                if (targetStatus == ShowSeatStatus.BOOKED) {
+                    return userId != null && Objects.equals(this.lockedByUserId, userId);
+                }
+                if (targetStatus == ShowSeatStatus.AVAILABLE) {
+                    return userId == null || Objects.equals(this.lockedByUserId, userId);
+                }
+                return false;
+            case BOOKED:
+                return targetStatus == ShowSeatStatus.AVAILABLE;
+            default:
+                return false;
+        }
+    }
+
     public synchronized boolean lock(String userId, Instant timestamp) {
-        if (this.status == ShowSeatStatus.AVAILABLE) {
+        if (canTransitionTo(ShowSeatStatus.LOCKED, userId)) {
             this.status = ShowSeatStatus.LOCKED;
             this.lockedByUserId = userId;
             this.lockedAt = timestamp;
@@ -71,11 +91,17 @@ public class ShowSeat {
     }
 
     public synchronized void unlock() {
-        if (this.status == ShowSeatStatus.LOCKED) {
+        unlock(null);
+    }
+
+    public synchronized boolean unlock(String userId) {
+        if (canTransitionTo(ShowSeatStatus.AVAILABLE, userId)) {
             this.status = ShowSeatStatus.AVAILABLE;
             this.lockedByUserId = null;
             this.lockedAt = null;
+            return true;
         }
+        return false;
     }
 
     public synchronized void release() {
@@ -85,7 +111,7 @@ public class ShowSeat {
     }
 
     public synchronized boolean book(String userId) {
-        if (this.status == ShowSeatStatus.LOCKED && Objects.equals(this.lockedByUserId, userId)) {
+        if (canTransitionTo(ShowSeatStatus.BOOKED, userId)) {
             this.status = ShowSeatStatus.BOOKED;
             return true;
         }

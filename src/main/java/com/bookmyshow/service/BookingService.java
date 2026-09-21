@@ -13,26 +13,46 @@ import com.bookmyshow.model.ShowSeat;
 import com.bookmyshow.model.User;
 import com.bookmyshow.payment.PaymentProcessor;
 import com.bookmyshow.pricing.PricingStrategy;
+import com.bookmyshow.repository.BookingRepository;
+import com.bookmyshow.repository.InMemoryBookingRepository;
+import com.bookmyshow.repository.InMemoryShowRepository;
+import com.bookmyshow.repository.InMemoryUserRepository;
+import com.bookmyshow.repository.ShowRepository;
+import com.bookmyshow.repository.UserRepository;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class BookingService {
     private final SeatLockManager lockManager;
     private final PricingStrategy pricingStrategy;
     private final PaymentProcessor paymentProcessor;
     private final BookingEventPublisher eventPublisher;
-    private final Map<String, Booking> bookings = new ConcurrentHashMap<>();
+    private final BookingRepository bookingRepository;
+    private final ShowRepository showRepository;
+    private final UserRepository userRepository;
 
     public BookingService(SeatLockManager lockManager, PricingStrategy pricingStrategy, PaymentProcessor paymentProcessor, BookingEventPublisher eventPublisher) {
+        this(lockManager, pricingStrategy, paymentProcessor, eventPublisher,
+             new InMemoryBookingRepository(), new InMemoryShowRepository(), new InMemoryUserRepository());
+    }
+
+    public BookingService(SeatLockManager lockManager,
+                          PricingStrategy pricingStrategy,
+                          PaymentProcessor paymentProcessor,
+                          BookingEventPublisher eventPublisher,
+                          BookingRepository bookingRepository,
+                          ShowRepository showRepository,
+                          UserRepository userRepository) {
         this.lockManager = Objects.requireNonNull(lockManager, "lockManager cannot be null");
         this.pricingStrategy = Objects.requireNonNull(pricingStrategy, "pricingStrategy cannot be null");
         this.paymentProcessor = Objects.requireNonNull(paymentProcessor, "paymentProcessor cannot be null");
         this.eventPublisher = Objects.requireNonNull(eventPublisher, "eventPublisher cannot be null");
+        this.bookingRepository = Objects.requireNonNull(bookingRepository, "bookingRepository cannot be null");
+        this.showRepository = Objects.requireNonNull(showRepository, "showRepository cannot be null");
+        this.userRepository = Objects.requireNonNull(userRepository, "userRepository cannot be null");
     }
 
     public Booking createBooking(User user, Show show, List<String> showSeatIds) {
@@ -41,6 +61,10 @@ public class BookingService {
         if (showSeatIds == null || showSeatIds.isEmpty()) {
             throw new IllegalArgumentException("At least one seat must be selected");
         }
+
+        // Ensure user and show are registered in repositories
+        userRepository.save(user);
+        showRepository.save(show);
 
         List<ShowSeat> selectedSeats = new ArrayList<>();
         for (String seatId : showSeatIds) {
@@ -68,15 +92,14 @@ public class BookingService {
         String bookingId = "BKG-" + UUID.randomUUID().toString().substring(0, 8);
         String bookingNumber = "BMS-" + System.currentTimeMillis();
         Booking booking = new Booking(bookingId, bookingNumber, user, show, selectedSeats, totalAmount);
-        bookings.put(bookingId, booking);
+        bookingRepository.save(booking);
         return booking;
     }
 
     public Booking confirmBooking(String bookingId, PaymentMode paymentMode) {
-        Booking booking = bookings.get(bookingId);
-        if (booking == null) {
-            throw new IllegalArgumentException("Booking not found: " + bookingId);
-        }
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + bookingId));
+
         if (booking.getStatus() != BookingStatus.PENDING) {
             throw new IllegalStateException("Booking is not in PENDING status: " + booking.getStatus());
         }
@@ -92,6 +115,7 @@ public class BookingService {
 
         // 3. Mark booking confirmed
         booking.confirm(payment);
+        bookingRepository.save(booking);
 
         // 4. Publish observer event
         eventPublisher.publishBookingConfirmed(new BookingConfirmedEvent("EVT-" + UUID.randomUUID(), booking, Instant.now()));
@@ -99,18 +123,29 @@ public class BookingService {
     }
 
     public void cancelBooking(String bookingId) {
-        Booking booking = bookings.get(bookingId);
-        if (booking == null) {
-            throw new IllegalArgumentException("Booking not found: " + bookingId);
-        }
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + bookingId));
 
         lockManager.releaseSeats(booking.getBookedSeats());
         booking.cancel();
+        bookingRepository.save(booking);
 
         eventPublisher.publishBookingCancelled(new BookingCancelledEvent("EVT-" + UUID.randomUUID(), booking, Instant.now()));
     }
 
     public Booking getBooking(String bookingId) {
-        return bookings.get(bookingId);
+        return bookingRepository.findById(bookingId).orElse(null);
+    }
+
+    public BookingRepository getBookingRepository() {
+        return bookingRepository;
+    }
+
+    public ShowRepository getShowRepository() {
+        return showRepository;
+    }
+
+    public UserRepository getUserRepository() {
+        return userRepository;
     }
 }
